@@ -31,7 +31,6 @@ if "authenticated" not in st.session_state:
 def check_login():
     username = st.session_state.get("user", "")
     password = st.session_state.get("pass", "")
-    # Pwede mong palitan dito ang username at password mo
     if username == "admin" and password == "business123":
         st.session_state.authenticated = True
     else:
@@ -43,9 +42,8 @@ if not st.session_state.authenticated:
         st.text_input("Username", key="user")
         st.text_input("Password", type="password", key="pass")
         st.form_submit_button("Mag-login", on_click=check_login)
-    st.stop() # Pigilan munang lumabas ang app hanggang hindi naka-login
+    st.stop()
 
-# Kung naka-login na:
 st.sidebar.success("Naka-login bilang Admin")
 if st.sidebar.button("Mag-logout"):
     st.session_state.authenticated = False
@@ -55,7 +53,6 @@ if st.sidebar.button("Mag-logout"):
 st.title("📊 Propesyonal na Business Order Tracker & Analytics")
 st.write("Kumpletong sistema na may database, login security, at visual sales analytics.")
 
-# Kuhanin ang lahat ng data mula sa SQLite database
 def load_data():
     return pd.read_sql("SELECT * FROM orders", conn)
 
@@ -88,7 +85,7 @@ if not df_orders.empty:
     # --- SECTION B: DASHBOARD & METRICS ---
     st.divider()
     total_orders = len(df_orders)
-    total_sales = df_orders['Price'].sum()
+    total_sales = df_orders['price'].sum()
     
     col_m1, col_m2 = st.columns(2)
     col_m1.metric("Kabuuang Bilang ng Orders", total_orders)
@@ -97,8 +94,8 @@ if not df_orders.empty:
 
     # --- SECTION C: VISUAL SALES ANALYTICS (CHARTS) ---
     st.header("2. Sales Analytics & Charts")
-    if 'Price' in df_orders.columns and len(df_orders) > 0:
-        chart_data = df_orders.groupby('item')['Price'].sum().reset_index()
+    if 'price' in df_orders.columns and len(df_orders) > 0:
+        chart_data = df_orders.groupby('item')['price'].sum().reset_index()
         st.subheader("Benta bawat Produkto / Item")
         st.bar_chart(chart_data.set_index('item'))
 
