@@ -1,90 +1,126 @@
 import hmac
-import sqlite3
-from datetime import datetime, date, timedelta
+from contextlib import contextmanager
+from datetime import datetime, date, timedelta, timezone
 
 import pandas as pd
+import psycopg2
 import streamlit as st
 
 st.set_page_config(page_title="Advanced Business Order Tracker", page_icon="📊", layout="wide")
 
-DB_PATH = "orders.db"
 STATUSES = ["Pending", "Packed", "Out for Delivery", "Delivered", "Cancelled"]
 PAYMENTS = ["Unpaid", "Paid"]
 CUSTOM = "-- Iba pa (i-type) --"
+PH_TZ = timezone(timedelta(hours=8))  # Philippine time (Streamlit Cloud runs on UTC)
+
+
+def now():
+    return datetime.now(PH_TZ)
 
 
 # ---------------------------------------------------------------
-# 1. DATABASE
+# 1. DATABASE (Supabase / PostgreSQL) - data stays even if app reboots
 # ---------------------------------------------------------------
-def add_column_if_missing(conn, table, col, ddl):
-    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
-    if col not in cols:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
-
-
 @st.cache_resource
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT,
-            customer TEXT,
-            item TEXT,
-            price REAL,
-            status TEXT
-        )
-        """
-    )
-    # New columns (safe for your existing data: old orders get quantity = 1)
-    add_column_if_missing(conn, "orders", "quantity", "INTEGER DEFAULT 1")
-    add_column_if_missing(conn, "orders", "contact", "TEXT DEFAULT ''")
-    add_column_if_missing(conn, "orders", "payment_status", "TEXT DEFAULT 'Unpaid'")
-    add_column_if_missing(conn, "orders", "updated_by", "TEXT DEFAULT ''")
-    add_column_if_missing(conn, "orders", "updated_at", "TEXT DEFAULT ''")
+def _connect():
+    return psycopg2.connect(st.secrets["DATABASE_URL"], connect_timeout=10)
 
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS products (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE,
-            price REAL DEFAULT 0,
-            cost REAL DEFAULT 0,
-            stock INTEGER DEFAULT 0,
-            reorder_level INTEGER DEFAULT 5
-        )
-        """
-    )
-    conn.commit()
+
+def db():
+    """Return a working connection (reconnects if it was closed)."""
+    conn = _connect()
+    try:
+        if conn.closed:
+            raise psycopg2.InterfaceError("closed")
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        conn.rollback()
+    except Exception:
+        _connect.clear()
+        conn = _connect()
     return conn
 
 
-conn = get_conn()
+@contextmanager
+def tx():
+    """Run several statements as one safe unit; saves all or nothing."""
+    conn = db()
+    cur = conn.cursor()
+    try:
+        yield cur
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+
+
+def query_df(sql, params=None):
+    conn = db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+    finally:
+        conn.rollback()
+    return pd.DataFrame(rows, columns=cols)
+
+
+@st.cache_resource
+def init_schema():
+    with tx() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS orders (
+                id SERIAL PRIMARY KEY,
+                date TEXT,
+                customer TEXT,
+                item TEXT,
+                price DOUBLE PRECISION,
+                status TEXT,
+                quantity INTEGER DEFAULT 1,
+                contact TEXT DEFAULT '',
+                payment_status TEXT DEFAULT 'Unpaid',
+                updated_by TEXT DEFAULT '',
+                updated_at TEXT DEFAULT ''
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS products (
+                id SERIAL PRIMARY KEY,
+                name TEXT UNIQUE,
+                price DOUBLE PRECISION DEFAULT 0,
+                cost DOUBLE PRECISION DEFAULT 0,
+                stock INTEGER DEFAULT 0,
+                reorder_level INTEGER DEFAULT 5
+            )
+            """
+        )
+    return True
+
+
+try:
+    init_schema()
+except Exception as e:
+    st.error("Hindi makakonekta sa database. Tingnan ang DATABASE_URL sa Streamlit Secrets.")
+    st.caption(f"Detalye ng error: {e}")
+    st.stop()
 
 
 # ---------------------------------------------------------------
 # 2. LOGIN (passwords come from Streamlit Secrets, not from code)
 # ---------------------------------------------------------------
 def get_users():
-    """
-    Reads accounts from Streamlit Secrets. Example secrets:
-
-    [users.admin]
-    password = "your-strong-password"
-    role = "admin"
-
-    [users.staff1]
-    password = "another-password"
-    role = "staff"
-    """
     try:
         users = {u: dict(v) for u, v in st.secrets["users"].items()}
         if users:
             return users, True
     except Exception:
         pass
-    # Fallback so the app still opens before you set up secrets
     return {"admin": {"password": "business123", "role": "admin"}}, False
 
 
@@ -139,30 +175,32 @@ if st.sidebar.button("Mag-logout"):
 # 3. DATA HELPERS
 # ---------------------------------------------------------------
 def load_orders():
-    df = pd.read_sql("SELECT * FROM orders ORDER BY id DESC", conn)
-    df["quantity"] = df["quantity"].fillna(1).astype(int)
+    df = query_df("SELECT * FROM orders ORDER BY id DESC")
+    df["price"] = pd.to_numeric(df["price"])
+    df["quantity"] = pd.to_numeric(df["quantity"]).fillna(1).astype(int)
     df["payment_status"] = df["payment_status"].fillna("Unpaid")
     df["total"] = df["price"] * df["quantity"]
     return df
 
 
 def load_products():
-    return pd.read_sql("SELECT * FROM products ORDER BY name", conn)
+    return query_df("SELECT * FROM products ORDER BY name")
 
 
 def find_product(name):
-    return conn.execute(
-        "SELECT id, stock, price FROM products WHERE lower(name) = lower(?)", (name,)
-    ).fetchone()
+    df = query_df("SELECT id, stock, price FROM products WHERE lower(name) = lower(%s)", (name,))
+    if df.empty:
+        return None
+    r = df.iloc[0]
+    return int(r["id"]), int(r["stock"]), float(r["price"])
 
 
 def sync_price():
-    """Auto-fill the price when a product is chosen."""
     choice = st.session_state.get("new_item", CUSTOM)
     if choice != CUSTOM:
         prod = find_product(choice)
         if prod:
-            st.session_state["new_price"] = float(prod[2])
+            st.session_state["new_price"] = prod[2]
 
 
 def save_order():
@@ -182,23 +220,30 @@ def save_order():
         flash("warning", "Dapat mas mataas sa 0 ang presyo.")
         return
 
-    prod = find_product(item)
-    if prod and prod[1] < qty:
-        flash("error", f"Kulang ang stock ng '{item}'. Natitira: {prod[1]}.")
+    stamp = now().strftime("%Y-%m-%d %H:%M")
+    try:
+        with tx() as cur:
+            cur.execute("SELECT id, stock FROM products WHERE lower(name) = lower(%s)", (item,))
+            prod = cur.fetchone()
+            if prod:
+                cur.execute(
+                    "UPDATE products SET stock = stock - %s WHERE id = %s AND stock >= %s",
+                    (qty, prod[0], qty),
+                )
+                if cur.rowcount == 0:
+                    flash("error", f"Kulang ang stock ng '{item}'. Natitira: {prod[1]}.")
+                    return
+            cur.execute(
+                """INSERT INTO orders
+                   (date, customer, item, price, status, quantity, contact, payment_status, updated_by, updated_at)
+                   VALUES (%s, %s, %s, %s, 'Pending', %s, %s, %s, %s, %s)""",
+                (stamp, customer, item, price, qty, contact, payment, USER, stamp),
+            )
+    except Exception as e:
+        flash("error", f"Hindi na-save ang order: {e}")
         return
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    conn.execute(
-        """INSERT INTO orders
-           (date, customer, item, price, status, quantity, contact, payment_status, updated_by, updated_at)
-           VALUES (?, ?, ?, ?, 'Pending', ?, ?, ?, ?, ?)""",
-        (now, customer, item, price, qty, contact, payment, USER, now),
-    )
-    if prod:
-        conn.execute("UPDATE products SET stock = stock - ? WHERE id = ?", (qty, prod[0]))
-    conn.commit()
     flash("success", f"Na-save na ang order para kay {customer}!")
-
     s["new_customer"] = ""
     s["new_contact"] = ""
     s["new_item"] = CUSTOM
@@ -209,30 +254,32 @@ def save_order():
 
 
 def update_order(order_id, new_status, new_payment):
-    row = conn.execute(
-        "SELECT item, quantity, status FROM orders WHERE id = ?", (order_id,)
-    ).fetchone()
-    if not row:
-        return False, "Hindi nahanap ang order."
-    item, qty, old_status = row
-    qty = qty or 1
-    prod = find_product(item)
+    try:
+        with tx() as cur:
+            cur.execute("SELECT item, quantity, status FROM orders WHERE id = %s FOR UPDATE", (order_id,))
+            row = cur.fetchone()
+            if not row:
+                return False, "Hindi nahanap ang order."
+            item, qty, old_status = row
+            qty = qty or 1
 
-    # Return stock when cancelled; take it again if un-cancelled
-    if prod:
-        if new_status == "Cancelled" and old_status != "Cancelled":
-            conn.execute("UPDATE products SET stock = stock + ? WHERE id = ?", (qty, prod[0]))
-        elif old_status == "Cancelled" and new_status != "Cancelled":
-            if prod[1] < qty:
-                return False, f"Kulang ang stock ng '{item}' para ibalik ang order."
-            conn.execute("UPDATE products SET stock = stock - ? WHERE id = ?", (qty, prod[0]))
+            cur.execute("SELECT id, stock FROM products WHERE lower(name) = lower(%s) FOR UPDATE", (item,))
+            prod = cur.fetchone()
+            if prod:
+                if new_status == "Cancelled" and old_status != "Cancelled":
+                    cur.execute("UPDATE products SET stock = stock + %s WHERE id = %s", (qty, prod[0]))
+                elif old_status == "Cancelled" and new_status != "Cancelled":
+                    if prod[1] < qty:
+                        return False, f"Kulang ang stock ng '{item}' para ibalik ang order."
+                    cur.execute("UPDATE products SET stock = stock - %s WHERE id = %s", (qty, prod[0]))
 
-    conn.execute(
-        "UPDATE orders SET status = ?, payment_status = ?, updated_by = ?, updated_at = ? WHERE id = ?",
-        (new_status, new_payment, USER, datetime.now().strftime("%Y-%m-%d %H:%M"), order_id),
-    )
-    conn.commit()
-    return True, "Na-update na ang order!"
+            cur.execute(
+                "UPDATE orders SET status = %s, payment_status = %s, updated_by = %s, updated_at = %s WHERE id = %s",
+                (new_status, new_payment, USER, now().strftime("%Y-%m-%d %H:%M"), order_id),
+            )
+        return True, "Na-update na ang order!"
+    except Exception as e:
+        return False, f"May error: {e}"
 
 
 # ---------------------------------------------------------------
@@ -286,8 +333,8 @@ with tabs[0]:
 
         dates = pd.to_datetime(df_orders["date"], errors="coerce")
         d1, d2 = st.columns(2)
-        start = d1.date_input("Mula", value=(dates.min().date() if dates.notna().any() else date.today()))
-        end = d2.date_input("Hanggang", value=date.today())
+        start = d1.date_input("Mula", value=(dates.min().date() if dates.notna().any() else now().date()))
+        end = d2.date_input("Hanggang", value=now().date())
 
         view = df_orders.copy()
         view_dates = pd.to_datetime(view["date"], errors="coerce").dt.date
@@ -312,16 +359,16 @@ with tabs[0]:
         selected_id = st.selectbox(
             "Piliin ang Order", list(labels.keys()), format_func=lambda x: labels[x]
         )
-        cur = df_orders[df_orders["id"] == selected_id].iloc[0]
+        cur_row = df_orders[df_orders["id"] == selected_id].iloc[0]
         u1, u2 = st.columns(2)
         new_status = u1.selectbox(
             "Bagong Status", STATUSES,
-            index=STATUSES.index(cur["status"]) if cur["status"] in STATUSES else 0,
+            index=STATUSES.index(cur_row["status"]) if cur_row["status"] in STATUSES else 0,
             key=f"status_{selected_id}",
         )
         new_payment = u2.selectbox(
             "Payment Status", PAYMENTS,
-            index=PAYMENTS.index(cur["payment_status"]) if cur["payment_status"] in PAYMENTS else 0,
+            index=PAYMENTS.index(cur_row["payment_status"]) if cur_row["payment_status"] in PAYMENTS else 0,
             key=f"pay_{selected_id}",
         )
         if st.button("I-update ang Order"):
@@ -358,15 +405,15 @@ with tabs[1]:
             p_reorder = p5.number_input("Reorder level", min_value=0, step=1, value=5)
             if st.form_submit_button("I-save ang Produkto"):
                 if p_name.strip():
-                    conn.execute(
-                        """INSERT INTO products (name, price, cost, stock, reorder_level)
-                           VALUES (?, ?, ?, ?, ?)
-                           ON CONFLICT(name) DO UPDATE SET
-                             price = excluded.price, cost = excluded.cost,
-                             stock = excluded.stock, reorder_level = excluded.reorder_level""",
-                        (p_name.strip(), p_price, p_cost, int(p_stock), int(p_reorder)),
-                    )
-                    conn.commit()
+                    with tx() as cur:
+                        cur.execute(
+                            """INSERT INTO products (name, price, cost, stock, reorder_level)
+                               VALUES (%s, %s, %s, %s, %s)
+                               ON CONFLICT (name) DO UPDATE SET
+                                 price = EXCLUDED.price, cost = EXCLUDED.cost,
+                                 stock = EXCLUDED.stock, reorder_level = EXCLUDED.reorder_level""",
+                            (p_name.strip(), p_price, p_cost, int(p_stock), int(p_reorder)),
+                        )
                     st.success("Na-save ang produkto!")
                     st.rerun()
                 else:
@@ -378,9 +425,9 @@ with tabs[1]:
             restock_name = r1.selectbox("Produkto", df_products["name"].tolist(), key="restock_name")
             restock_qty = r2.number_input("Dagdag na bilang", min_value=1, step=1, key="restock_qty")
             if st.button("Idagdag sa Stock"):
-                conn.execute("UPDATE products SET stock = stock + ? WHERE name = ?",
-                             (int(restock_qty), restock_name))
-                conn.commit()
+                with tx() as cur:
+                    cur.execute("UPDATE products SET stock = stock + %s WHERE name = %s",
+                                (int(restock_qty), restock_name))
                 st.success("Na-update ang stock!")
                 st.rerun()
 
@@ -394,7 +441,7 @@ if IS_ADMIN:
         else:
             valid["day"] = pd.to_datetime(valid["date"], errors="coerce").dt.date
             period = st.selectbox("Panahon", ["Lahat", "Ngayon", "Huling 7 araw", "Huling 30 araw"])
-            today = date.today()
+            today = now().date()
             if period == "Ngayon":
                 valid = valid[valid["day"] == today]
             elif period == "Huling 7 araw":
@@ -402,11 +449,10 @@ if IS_ADMIN:
             elif period == "Huling 30 araw":
                 valid = valid[valid["day"] >= today - timedelta(days=29)]
 
-            # Profit: only for items that exist in the product list with a cost
             costs = df_products.set_index(df_products["name"].str.lower())["cost"].to_dict()
             valid["unit_cost"] = valid["item"].str.lower().map(costs)
             known = valid.dropna(subset=["unit_cost"])
-            profit = ((known["price"] - known["unit_cost"]) * known["quantity"]).sum()
+            profit = ((known["price"] - known["unit_cost"].astype(float)) * known["quantity"]).sum()
 
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Bilang ng Orders", len(valid))
@@ -425,7 +471,8 @@ if IS_ADMIN:
                 st.line_chart(valid.groupby("day")["total"].sum())
 
         st.subheader("Bilang ng Orders ayon sa Status")
-        st.bar_chart(df_orders["status"].value_counts())
+        if not df_orders.empty:
+            st.bar_chart(df_orders["status"].value_counts())
 
     # ================= TAB 4: EXPORT (admin only) =================
     with tabs[3]:
@@ -433,13 +480,14 @@ if IS_ADMIN:
         st.download_button(
             "📥 Orders (CSV, Excel compatible)",
             data=df_orders.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"orders_{date.today()}.csv",
+            file_name=f"orders_{now().date()}.csv",
             mime="text/csv",
         )
         st.download_button(
             "📥 Inventory (CSV, Excel compatible)",
             data=df_products.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"inventory_{date.today()}.csv",
+            file_name=f"inventory_{now().date()}.csv",
             mime="text/csv",
         )
-        st.info("Mag-download nang regular bilang backup, lalo na habang SQLite pa ang gamit mo.")
+        st.info("Naka-save na ang data mo sa Supabase, kaya hindi na ito mawawala kapag nag-reboot ang app. "
+                "Ang CSV ay extra backup na lang.")
