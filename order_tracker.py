@@ -1,6 +1,6 @@
 """
 Order Tracker - Multi-Business & Role-Based System
-Professional Edition with Language Switcher & Categorized Layout
+Professional Edition with Clean UI, Global Language Switcher, and Owner Management
 """
 import hashlib
 import hmac
@@ -37,9 +37,6 @@ MIN_PASSWORD = 8
 TEXTS = {
     "en": {
         "title": "Business Order Management System",
-        "portal": "System Access Portal",
-        "login": "Sign In",
-        "signup": "Register New Account",
         "orders": "Orders",
         "inventory": "Inventory",
         "cancellations": "Cancellations",
@@ -58,9 +55,6 @@ TEXTS = {
     },
     "tl": {
         "title": "Sistema ng Pamamahala ng Negosyo",
-        "portal": "Portal ng Sistema",
-        "login": "Mag-log in",
-        "signup": "Mag-rehistro ng Bagong Account",
         "orders": "Mga Order",
         "inventory": "Imbentaryo",
         "cancellations": "Mga Na-cancel",
@@ -113,8 +107,9 @@ def can(perm):
 
 
 def t(key):
-    lang = st.session_state.get("lang", "tl")
-    return TEXTS.get(lang, TEXTS["tl"]).get(key, key)
+    lang = st.session_state.get("lang", "Tagalog")
+    lang_code = "tl" if lang == "Tagalog" else "en"
+    return TEXTS.get(lang_code, TEXTS["tl"]).get(key, key)
 
 
 # ---------------------------------------------------------------
@@ -411,9 +406,12 @@ def try_login(username, password):
 if not st.session_state.authenticated:
     st.title("🔐 Portal ng Pamamahala")
     
-    # Wika Selector sa Login Screen
-    lang_choice = st.selectbox("Piliin ang Wika / Select Language", ["Tagalog", "English"])
-    st.session_state["lang"] = "tl" if lang_choice == "Tagalog" else "en"
+    # Global Language Switcher sa Login Page
+    if "lang" not in st.session_state:
+        st.session_state["lang"] = "Tagalog"
+    
+    lang_choice = st.selectbox("Piliin ang Wika / Select Language", ["Tagalog", "English"], key="login_lang_selector")
+    st.session_state["lang"] = lang_choice
 
     tab_login, tab_signup = st.tabs(["Mag-log in", "Magrehistro"])
 
@@ -488,7 +486,7 @@ if st.session_state.role != "owner":
 ROLE = st.session_state.role
 
 # Sidebar Configuration
-st.sidebar.selectbox("Language / Wika", ["Tagalog", "English"], key="lang", index=0 if st.session_state.get("lang","tl")=="tl" else 1)
+st.sidebar.selectbox("Language / Wika", ["Tagalog", "English"], key="lang", index=0 if st.session_state.get("lang","Tagalog")=="Tagalog" else 1)
 if ROLE == "owner":
     st.sidebar.success("Master Owner Account")
 else:
@@ -541,11 +539,11 @@ def sync_price():
 
 
 # ---------------------------------------------------------------
-# 4. OWNER PANEL
+# 4. OWNER PANEL (Na may kakayahang mamahala at magrehistro ng Users/Admin)
 # ---------------------------------------------------------------
 def owner_panel():
     st.title("🏢 Dashboard ng Master Owner")
-    t_biz, t_acc = st.tabs(["Pamamahala ng Negosyo", "Account"])
+    t_biz, t_users, t_acc = st.tabs(["Pamamahala ng Negosyo", "Pag-rehistro ng Admin/Users", "Account"])
 
     with t_biz:
         show_flash()
@@ -558,7 +556,7 @@ def owner_panel():
         st.subheader("Listahan ng mga Negosyo")
         st.dataframe(biz, use_container_width=True, hide_index=True)
 
-        st.subheader("Magdagdag ng Bagong Negosyo")
+        st.subheader("Magdagdag ng Bagong Negosyo at Admin")
         with st.form("new_biz_form", clear_on_submit=True):
             n_name = st.text_input("Pangalan ng Negosyo")
             n_user = st.text_input("Admin Username")
@@ -582,6 +580,34 @@ def owner_panel():
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
+
+    with t_users:
+        st.subheader("Direktang Pagtatalaga ng User / Admin sa mga Negosyo")
+        all_biz = query_df("SELECT id, name FROM businesses WHERE active = TRUE")
+        if all_biz.empty:
+            st.warning("Wala pang negosyong nakarehistro.")
+        else:
+            biz_dict = {int(r.id): r.name for r in all_biz.itertuples()}
+            with st.form("owner_add_user_form", clear_on_submit=True):
+                sel_b = st.selectbox("Pumili ng Negosyo", list(biz_dict.keys()), format_func=lambda x: biz_dict[x])
+                u_name = st.text_input("Username ng User")
+                u_full = st.text_input("Buong Pangalan")
+                u_role = st.selectbox("Tungkulin (Role)", ["admin", "staff", "viewer"], format_func=lambda x: ROLE_LABELS.get(x, x))
+                u_pw = st.text_input("Password", type="password")
+                go_u = st.form_submit_button("Lumikha ng User Account")
+            
+            if go_u:
+                u_name = u_name.strip().lower()
+                prob = check_username(u_name) or check_new_password(u_pw)
+                if prob:
+                    st.error(prob)
+                else:
+                    try:
+                        with tx() as cur:
+                            insert_user(cur, u_name, u_pw, u_role, sel_b, u_full)
+                        st.success(f"Matagumpay na naidagdag si '{u_name}' bilang {u_role} sa negosyong ito.")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
 
     with t_acc:
         st.subheader("Palitan ang Password")
@@ -641,7 +667,6 @@ if ROLE == "viewer":
 with T[TAB_ORDERS]:
     show_flash()
     
-    # Sub-categories para sa Orders gamit ang Radio Buttons o Selectbox
     order_sub_action = st.radio(
         "Piliin ang Kategorya ng Transaksyon:",
         [t("add_order"), t("view_orders"), t("manage_status"), t("cancel_order"), t("pending_refunds")],
@@ -968,7 +993,7 @@ if TAB_EXPORT in T:
 if TAB_USERS in T:
     with T[TAB_USERS]:
         st.subheader("Pamamahala ng mga Tauhan at Admin")
-        st.caption(hanggang_admin := f"Hanggang {MAX_ADMINS} Admin lamang ang pinapayagan bawat negosyo.")
+        st.caption(f"Hanggang {MAX_ADMINS} Admin lamang ang pinapayagan bawat negosyo.")
         
         users_df = query_df("SELECT id, username, full_name, role, active, created_at FROM users WHERE business_id = %s ORDER BY id", (bid(),))
         st.dataframe(users_df.rename(columns={"username": "Username", "full_name": "Pangalan", "role": "Tungkulin (Role)", "active": "Aktibo?"}), use_container_width=True, hide_index=True)
