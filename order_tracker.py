@@ -1,6 +1,6 @@
 """
 Order Tracker - Multi-Business & Role-Based System
-Professional Edition with Clean UI, Global Language Switcher, and Owner Management
+Professional Edition with Complete Global Language Translation & Owner Management
 """
 import hashlib
 import hmac
@@ -19,7 +19,7 @@ st.set_page_config(page_title="Business Order Management System", page_icon="�
 STATUSES = ["Pending", "Packed", "Out for Delivery", "Delivered", "Cancelled"]
 ACTIVE_STATUSES = ["Pending", "Packed", "Out for Delivery", "Delivered"]
 PAYMENTS = ["Unpaid", "Paid"]
-CUSTOM = "-- Iba pa (Custom) --"
+CUSTOM = "-- Iba pa / Custom --"
 REASONS = [
     "Nagbago ang isip ng customer / Customer changed mind",
     "Maling order / Wrong item",
@@ -33,10 +33,19 @@ PH_TZ = timezone(timedelta(hours=8))
 MAX_ADMINS = 2
 MIN_PASSWORD = 8
 
-# --- MULTILINGUAL DICTIONARY ---
+# --- COMPLETE MULTILINGUAL DICTIONARY ---
 TEXTS = {
     "en": {
-        "title": "Business Order Management System",
+        "sys_title": "Business Order Management System",
+        "portal_title": "Management Portal",
+        "login_tab": "Sign In",
+        "signup_tab": "Register Staff",
+        "username": "Username",
+        "password": "Password",
+        "login_btn": "Sign In",
+        "signup_btn": "Register Staff",
+        "full_name": "Full Name",
+        "select_biz": "Select Business",
         "orders": "Orders",
         "inventory": "Inventory",
         "cancellations": "Cancellations",
@@ -52,9 +61,49 @@ TEXTS = {
         "view_inventory": "Product Catalog",
         "add_product": "Add / Update Product",
         "restock": "Stock Replenishment",
+        "customer_name": "Customer Name",
+        "contact_num": "Contact Number",
+        "item_type": "Product or Item",
+        "custom_item": "Custom Item Name",
+        "qty": "Quantity",
+        "unit_price": "Unit Price (₱)",
+        "pay_status": "Payment Status",
+        "save_order_btn": "Save Order",
+        "filter_status": "Filter by Status",
+        "filter_pay": "Filter by Payment",
+        "search_cust": "Search Customer",
+        "new_status": "New Status",
+        "cancel_units": "Units to Cancel",
+        "cancel_reason": "Cancellation Reason",
+        "cancel_note": "Additional Note (Optional)",
+        "restock_check": "Restock cancelled units",
+        "refund_check": "Refund has been returned to customer",
+        "cancel_btn": "Cancel Selected Units",
+        "prod_name": "Product Name",
+        "current_stock": "Current Stock",
+        "selling_price": "Selling Price (₱)",
+        "cost_price": "Cost Price (₱)",
+        "reorder_lvl": "Reorder Level",
+        "save_prod_btn": "Save Product",
+        "add_stock_btn": "Add to Stock",
+        "logout_btn": "Log Out",
+        "change_pass": "Change Password",
+        "cur_pass": "Current Password",
+        "new_pass": "New Password",
+        "confirm_pass": "Confirm Password",
+        "save_pass_btn": "Save New Password",
     },
     "tl": {
-        "title": "Sistema ng Pamamahala ng Negosyo",
+        "sys_title": "Sistema ng Pamamahala ng Negosyo",
+        "portal_title": "Portal ng Pamamahala",
+        "login_tab": "Mag-log in",
+        "signup_tab": "Magrehistro ng Staff",
+        "username": "Username",
+        "password": "Password",
+        "login_btn": "Mag-sign In",
+        "signup_btn": "Magrehistro Bilang Staff",
+        "full_name": "Buong Pangalan",
+        "select_biz": "Piliin ang Negosyo",
         "orders": "Mga Order",
         "inventory": "Imbentaryo",
         "cancellations": "Mga Na-cancel",
@@ -70,6 +119,37 @@ TEXTS = {
         "view_inventory": "Katalogo ng Produkto",
         "add_product": "Magdagdag o Mag-update ng Produkto",
         "restock": "Pagdaragdag ng Stock",
+        "customer_name": "Pangalan ng Customer",
+        "contact_num": "Numero ng Telepono / Contact",
+        "item_type": "Uri ng Produkto o Serbisyo",
+        "custom_item": "Pangalan ng Pasadyang Item",
+        "qty": "Dami (Quantity)",
+        "unit_price": "Presyo bawat Yunit (₱)",
+        "pay_status": "Katayuan ng Bayad",
+        "save_order_btn": "Itala ang Order",
+        "filter_status": "Salain ayon sa Status",
+        "filter_pay": "Salain ayon sa Bayad",
+        "search_cust": "Hanapin ang Customer",
+        "new_status": "Bagong Status",
+        "cancel_units": "Ilang yunit ang kakanselahin?",
+        "cancel_reason": "Dahilan ng Pag-cancel",
+        "cancel_note": "Karagdagang Tala (Opsyonal)",
+        "restock_check": "Ibalik sa imbentaryo ang mga yunit na ito",
+        "refund_check": "Naibalik na ba ang pera sa customer?",
+        "cancel_btn": "Kanselahin ang Piniling Yunit",
+        "prod_name": "Pangalan ng Produkto",
+        "current_stock": "Kasalukuyang Stock",
+        "selling_price": "Presyo ng Pagbebenta (₱)",
+        "cost_price": "Puhunan bawat Yunit (₱)",
+        "reorder_lvl": "Limitasyon (Reorder Level)",
+        "save_prod_btn": "I-save ang Produkto",
+        "add_stock_btn": "Magdagdag sa Stock",
+        "logout_btn": "Mag-log out",
+        "change_pass": "Palitan ang Password",
+        "cur_pass": "Kasalukuyang Password",
+        "new_pass": "Bagong Password",
+        "confirm_pass": "Kumpirmahin ang Bagong Password",
+        "save_pass_btn": "I-save ang Pagbabago",
     }
 }
 
@@ -251,8 +331,7 @@ def init_schema():
 try:
     init_schema()
 except Exception as e:
-    st.error("Koneksyon sa database ay nabigo. Suriin ang DATABASE_URL sa Streamlit Secrets.")
-    st.caption(f"Detalye: {e}")
+    st.error(f"Koneksyon sa database ay nabigo: {e}")
     st.stop()
 
 
@@ -299,16 +378,6 @@ def insert_user(cur, username, password, role, business_id, full_name):
             VALUES (%s, %s, %s, %s, %s, TRUE, %s)""",
         (username, hash_password(password), full_name.strip(), role, business_id, stamp()),
     )
-
-
-def flash(kind, msg):
-    st.session_state["flash"] = (kind, msg)
-
-
-def show_flash():
-    if "flash" in st.session_state:
-        kind, msg = st.session_state.pop("flash")
-        getattr(st, kind)(msg)
 
 
 def logout():
@@ -404,26 +473,26 @@ def try_login(username, password):
 
 
 if not st.session_state.authenticated:
-    st.title("🔐 Portal ng Pamamahala")
+    st.title(f"🔐 {t('portal_title')}")
     
-    # Global Language Switcher sa Login Page
+    # Global Language Switcher sa Login Page nang walang kulay pula/highlights
     if "lang" not in st.session_state:
         st.session_state["lang"] = "Tagalog"
     
-    lang_choice = st.selectbox("Piliin ang Wika / Select Language", ["Tagalog", "English"], key="login_lang_selector")
+    lang_choice = st.selectbox("Language / Wika", ["Tagalog", "English"], key="login_lang_selector")
     st.session_state["lang"] = lang_choice
 
-    tab_login, tab_signup = st.tabs(["Mag-log in", "Magrehistro"])
+    tab_login, tab_signup = st.tabs([t("login_tab"), t("signup_tab")])
 
     with tab_login:
         with st.form("login_form"):
-            u = st.text_input("Username")
-            p = st.text_input("Password", type="password")
-            ok = st.form_submit_button("Mag-sign In")
+            u = st.text_input(t("username"))
+            p = st.text_input(t("password"), type="password")
+            ok = st.form_submit_button(t("login_btn"))
         if ok:
             rec, err = try_login(u.strip().lower(), p)
             if err:
-                st.error(err)
+                st.warning(err)
             else:
                 st.session_state.authenticated = True
                 st.session_state.user_id = int(rec["id"])
@@ -435,20 +504,19 @@ if not st.session_state.authenticated:
                 st.rerun()
 
     with tab_signup:
-        st.subheader("Paglikha ng Bagong Account")
         active_biz = query_df("SELECT id, name FROM businesses WHERE active = TRUE ORDER BY name")
         with st.form("signup_form"):
-            new_u = st.text_input("Username (3-30 karakter)")
-            new_fn = st.text_input("Buong Pangalan")
-            new_p1 = st.text_input("Password", type="password")
-            new_p2 = st.text_input("Kumpirmahin ang Password", type="password")
+            new_u = st.text_input(t("username") + " (3-30 karakter)")
+            new_fn = st.text_input(t("full_name"))
+            new_p1 = st.text_input(t("password"), type="password")
+            new_p2 = st.text_input(t("confirm_pass"), type="password")
             if active_biz.empty:
-                st.warning("Walang aktibong negosyo sa ngayon.")
+                st.info("Walang aktibong negosyo sa ngayon.")
                 biz_choice = None
             else:
                 biz_dict = {int(r.id): r.name for r in active_biz.itertuples()}
-                biz_choice = st.selectbox("Piliin ang Negosyo", list(biz_dict.keys()), format_func=lambda x: biz_dict[x])
-            reg_ok = st.form_submit_button("Magrehistro Bilang Staff")
+                biz_choice = st.selectbox(t("select_biz"), list(biz_dict.keys()), format_func=lambda x: biz_dict[x])
+            reg_ok = st.form_submit_button(t("signup_btn"))
 
         if reg_ok:
             new_u = new_u.strip().lower()
@@ -456,16 +524,16 @@ if not st.session_state.authenticated:
             if not biz_choice:
                 problem = "Pumili ng wastong negosyo."
             if problem:
-                st.error(problem)
+                st.warning(problem)
             else:
                 try:
                     with tx() as cur:
                         insert_user(cur, new_u, new_p1, "staff", int(biz_choice), new_fn)
                     st.success("Matagumpay na nakapagrehistro! Maaari nang mag-log in.")
                 except psycopg2.IntegrityError:
-                    st.error("Ang username na ito ay ginagamit na.")
+                    st.warning("Ang username na ito ay ginagamit na.")
                 except Exception as e:
-                    st.error(f"May error: {e}")
+                    st.error(f"Error: {e}")
     st.stop()
 
 # Recheck status
@@ -485,7 +553,7 @@ if st.session_state.role != "owner":
 
 ROLE = st.session_state.role
 
-# Sidebar Configuration
+# Sidebar Global Language Switcher
 st.sidebar.selectbox("Language / Wika", ["Tagalog", "English"], key="lang", index=0 if st.session_state.get("lang","Tagalog")=="Tagalog" else 1)
 if ROLE == "owner":
     st.sidebar.success("Master Owner Account")
@@ -493,13 +561,13 @@ else:
     st.sidebar.success(f"Negosyo: {st.session_state.business_name}")
     st.sidebar.write(f"👤 {me()} ({ROLE.capitalize()})")
 
-if st.sidebar.button("Mag-log out"):
+if st.sidebar.button(t("logout_btn")):
     logout()
     st.rerun()
 
 
 # ---------------------------------------------------------------
-# 3. CORE FUNCTIONS (BUSINESS OPERATIONS)
+# 3. CORE FUNCTIONS
 # ---------------------------------------------------------------
 def load_orders():
     df = query_df("SELECT * FROM orders WHERE business_id = %s ORDER BY id DESC", (bid(),))
@@ -539,14 +607,13 @@ def sync_price():
 
 
 # ---------------------------------------------------------------
-# 4. OWNER PANEL (Na may kakayahang mamahala at magrehistro ng Users/Admin)
+# 4. OWNER PANEL
 # ---------------------------------------------------------------
 def owner_panel():
     st.title("🏢 Dashboard ng Master Owner")
-    t_biz, t_users, t_acc = st.tabs(["Pamamahala ng Negosyo", "Pag-rehistro ng Admin/Users", "Account"])
+    t_biz, t_users, t_acc = st.tabs(["Pamamahala ng Negosyo", "Pag-rehistro ng Admin/Users", t("account")])
 
     with t_biz:
-        show_flash()
         biz = query_df(
             """SELECT b.id, b.name, b.active, b.created_at,
                      (SELECT COUNT(*) FROM users u WHERE u.business_id = b.id AND u.active) AS active_users,
@@ -566,7 +633,7 @@ def owner_panel():
         if go_biz:
             n_name, n_user = n_name.strip(), n_user.strip().lower()
             if not n_name:
-                st.error("Ilagay ang pangalan ng negosyo.")
+                st.warning("Ilagay ang pangalan ng negosyo.")
             else:
                 try:
                     with tx() as cur:
@@ -576,7 +643,7 @@ def owner_panel():
                         )
                         new_id = cur.fetchone()[0]
                         insert_user(cur, n_user, n_pw, "admin", new_id, n_full)
-                    flash("success", f"Matagumpay na nalikha ang negosyong '{n_name}'.")
+                    st.success(f"Matagumpay na nalikha ang negosyong '{n_name}'.")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error: {e}")
@@ -585,7 +652,7 @@ def owner_panel():
         st.subheader("Direktang Pagtatalaga ng User / Admin sa mga Negosyo")
         all_biz = query_df("SELECT id, name FROM businesses WHERE active = TRUE")
         if all_biz.empty:
-            st.warning("Wala pang negosyong nakarehistro.")
+            st.info("Wala pang negosyong nakarehistro.")
         else:
             biz_dict = {int(r.id): r.name for r in all_biz.itertuples()}
             with st.form("owner_add_user_form", clear_on_submit=True):
@@ -600,7 +667,7 @@ def owner_panel():
                 u_name = u_name.strip().lower()
                 prob = check_username(u_name) or check_new_password(u_pw)
                 if prob:
-                    st.error(prob)
+                    st.warning(prob)
                 else:
                     try:
                         with tx() as cur:
@@ -610,18 +677,18 @@ def owner_panel():
                         st.error(f"Error: {e}")
 
     with t_acc:
-        st.subheader("Palitan ang Password")
+        st.subheader(t("change_pass"))
         with st.form("owner_pw"):
-            cpw = st.text_input("Kasalukuyang Password", type="password")
-            npw = st.text_input("Bagong Password", type="password")
-            if st.form_submit_button("I-save ang Pagbabago"):
+            cpw = st.text_input(t("cur_pass"), type="password")
+            npw = st.text_input(t("new_pass"), type="password")
+            if st.form_submit_button(t("save_pass_btn")):
                 row = query_df("SELECT password_hash FROM users WHERE id = %s", (st.session_state.user_id,))
                 if row.empty or not check_password(cpw, row.iloc[0]["password_hash"]):
-                    st.error("Mali ang kasalukuyang password.")
+                    st.warning("Mali ang kasalukuyang password.")
                 else:
                     prob = check_new_password(npw)
                     if prob:
-                        st.error(prob)
+                        st.warning(prob)
                     else:
                         with tx() as cur:
                             cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (hash_password(npw), st.session_state.user_id))
@@ -634,9 +701,9 @@ if ROLE == "owner":
 
 
 # ---------------------------------------------------------------
-# 5. MAIN APPLICATION LAYOUT & CATEGORIZED TABS
+# 5. MAIN APPLICATION LAYOUT & TRANSLATED CATEGORIZED TABS
 # ---------------------------------------------------------------
-st.title(f"📊 {st.session_state.business_name} - Paninindigan ng Operasyon")
+st.title(f"📊 {st.session_state.business_name} - {t('sys_title')}")
 
 TAB_ORDERS = "🧾 " + t("orders")
 TAB_INV = "📦 " + t("inventory")
@@ -663,37 +730,35 @@ if ROLE == "viewer":
     st.info("👀 Ang account na ito ay may pahintulot na TINGIN LAMANG (View-Only).")
 
 
-# ================= ORDERS MODULE (CATEGORIZED) =================
+# ================= ORDERS MODULE =================
 with T[TAB_ORDERS]:
-    show_flash()
-    
     order_sub_action = st.radio(
-        "Piliin ang Kategorya ng Transaksyon:",
+        "Kategorya:",
         [t("add_order"), t("view_orders"), t("manage_status"), t("cancel_order"), t("pending_refunds")],
         horizontal=True
     )
     st.divider()
 
     if order_sub_action == t("add_order") and can("add_order"):
-        st.subheader("Pagtatala ng Bagong Order")
+        st.subheader(t("add_order"))
         product_names = df_products["name"].tolist()
         
         with st.form("order_entry_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
-            c1.text_input("Pangalan ng Customer", key="new_customer")
-            c2.text_input("Numero ng Telepono / Contact", key="new_contact")
+            c1.text_input(t("customer_name"), key="new_customer")
+            c2.text_input(t("contact_num"), key="new_contact")
 
             c3, c4 = st.columns(2)
-            c3.selectbox("Uri ng Produkto o Serbisyo", [CUSTOM] + product_names, key="new_item", on_change=sync_price)
+            c3.selectbox(t("item_type"), [CUSTOM] + product_names, key="new_item", on_change=sync_price)
             if st.session_state.get("new_item", CUSTOM) == CUSTOM:
-                c4.text_input("Pangalan ng Pasadyang Item", key="new_item_custom")
+                c4.text_input(t("custom_item"), key="new_item_custom")
 
             c5, c6, c7 = st.columns(3)
-            c5.number_input("Dami (Quantity)", min_value=1, step=1, value=1, key="new_qty")
-            c6.number_input("Presyo bawat yunit (₱)", min_value=0.0, format="%.2f", key="new_price")
-            c7.selectbox("Katayuan ng Bayad", PAYMENTS, key="new_payment")
+            c5.number_input(t("qty"), min_value=1, step=1, value=1, key="new_qty")
+            c6.number_input(t("unit_price"), min_value=0.0, format="%.2f", key="new_price")
+            c7.selectbox(t("pay_status"), PAYMENTS, key="new_payment")
 
-            submitted_order = st.form_submit_button("Itala ang Order", type="primary")
+            submitted_order = st.form_submit_button(t("save_order_btn"), type="primary")
 
         if submitted_order:
             s = st.session_state
@@ -723,7 +788,7 @@ with T[TAB_ORDERS]:
                                 (qty, prod[0], qty),
                             )
                             if cur.rowcount == 0:
-                                st.error(f"Kulang ang stock para sa '{final_item}'. Natitirang stock: {prod[1]}.")
+                                st.warning(f"Kulang ang stock para sa '{final_item}'.")
                                 st.stop()
                         cur.execute(
                             """INSERT INTO orders
@@ -735,17 +800,17 @@ with T[TAB_ORDERS]:
                     st.success(f"Matagumpay na naitala ang order para kay {cust}!")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Nabigo ang pag-save: {e}")
+                    st.error(f"Error: {e}")
 
     elif order_sub_action == t("view_orders"):
-        st.subheader("Talaan ng mga Aktibong Order")
+        st.subheader(t("view_orders"))
         if df_orders.empty:
             st.info("Walang rehistradong mga order sa kasalukuyan.")
         else:
             f1, f2, f3 = st.columns(3)
-            f_status = f1.selectbox("Salain ayon sa Status", ["Lahat"] + STATUSES)
-            f_pay = f2.selectbox("Salain ayon sa Bayad", ["Lahat"] + PAYMENTS)
-            search_query = f3.text_input("Hanapin ang customer")
+            f_status = f1.selectbox(t("filter_status"), ["Lahat"] + STATUSES)
+            f_pay = f2.selectbox(t("filter_pay"), ["Lahat"] + PAYMENTS)
+            search_query = f3.text_input(t("search_cust"))
 
             view_df = df_orders.copy()
             if f_status != "Lahat":
@@ -758,7 +823,7 @@ with T[TAB_ORDERS]:
             st.dataframe(view_df[["id", "date", "customer", "contact", "item", "active_qty", "price", "total", "status", "payment_status"]], use_container_width=True, hide_index=True)
 
     elif order_sub_action == t("manage_status") and can("edit_order"):
-        st.subheader("Pamamahala ng Status at Pagbabayad ng Order")
+        st.subheader(t("manage_status"))
         editable = df_orders[df_orders["active_qty"] > 0]
         if editable.empty:
             st.info("Walang order na maaaring baguhin.")
@@ -768,8 +833,8 @@ with T[TAB_ORDERS]:
             c_row = editable[editable["id"] == sel_id].iloc[0]
 
             with st.form("update_status_form"):
-                ns = st.selectbox("Bagong Status", ACTIVE_STATUSES, index=ACTIVE_STATUSES.index(c_row["status"]) if c_row["status"] in ACTIVE_STATUSES else 0)
-                np = st.selectbox("Katayuan ng Bayad", PAYMENTS, index=PAYMENTS.index(c_row["payment_status"]) if c_row["payment_status"] in PAYMENTS else 0)
+                ns = st.selectbox(t("new_status"), ACTIVE_STATUSES, index=ACTIVE_STATUSES.index(c_row["status"]) if c_row["status"] in ACTIVE_STATUSES else 0)
+                np = st.selectbox(t("pay_status"), PAYMENTS, index=PAYMENTS.index(c_row["payment_status"]) if c_row["payment_status"] in PAYMENTS else 0)
                 sub_up = st.form_submit_button("I-update ang Status")
             
             if sub_up:
@@ -782,7 +847,7 @@ with T[TAB_ORDERS]:
                     st.error(f"Error: {e}")
 
     elif order_sub_action == t("cancel_order") and can("cancel"):
-        st.subheader("Pag-kansela ng Order o Pagbabalik (Cancellation)")
+        st.subheader(t("cancel_order"))
         editable = df_orders[df_orders["active_qty"] > 0]
         if editable.empty:
             st.info("Walang order na maaaring i-cancel.")
@@ -793,18 +858,18 @@ with T[TAB_ORDERS]:
             max_u = int(crow["active_qty"])
 
             with st.form("cancel_form"):
-                units = st.number_input("Ilang yunit ang kakanselahin?", min_value=1, max_value=max_u, value=1)
-                reason = st.selectbox("Dahilan", REASONS)
-                note = st.text_input("Karagdagang Tala (Opsyonal)")
-                restock = st.checkbox("Ibalik sa imbentaryo ang mga yunit na ito", value=True)
+                units = st.number_input(t("cancel_units"), min_value=1, max_value=max_u, value=1)
+                reason = st.selectbox(t("cancel_reason"), REASONS)
+                note = st.text_input(t("cancel_note"))
+                restock = st.checkbox(t("restock_check"), value=True)
                 
                 ref_now = False
                 if crow["payment_status"] == "Paid":
                     ref_amt = float(units) * float(crow["price"])
                     st.warning(f"Ang order na ito ay BAYAD na. Kinakailangang magbalik ng refund na nagkakahalaga ng ₱{ref_amt:,.2f}.")
-                    ref_now = st.checkbox("Naibalik na ba ang pera sa customer?", value=False)
+                    ref_now = st.checkbox(t("refund_check"), value=False)
                 
-                sub_cancel = st.form_submit_button("Kanselahin ang Piniling Yunit", type="primary")
+                sub_cancel = st.form_submit_button(t("cancel_btn"), type="primary")
 
             if sub_cancel:
                 try:
@@ -839,14 +904,14 @@ with T[TAB_ORDERS]:
                     st.error(f"Error: {e}")
 
     elif order_sub_action == t("pending_refunds") and can("refund"):
-        st.subheader("Mga Refund na Naghihintay ng Aksyon")
+        st.subheader(t("pending_refunds"))
         pending_ref = df_orders[df_orders["refund_pending"] > 0.009]
         if pending_ref.empty:
             st.success("Walang nakabinbing refund sa kasalukuyan.")
         else:
             st.dataframe(pending_ref[["id", "customer", "contact", "item", "refund_pending"]], use_container_width=True, hide_index=True)
             ref_labels = {int(r.id): f"ID {r.id}: {r.customer} - ₱{r.refund_pending:,.2f}" for r in pending_ref.itertuples()}
-            r_id = st.selectbox("Pumili ng Order para Markahan bilang Naibalik ang Refund", list(ref_labels.keys()), format_func=lambda x: ref_labels[x])
+            r_id = st.selectbox("Pumili ng Order", list(ref_labels.keys()), format_func=lambda x: ref_labels[x])
             if st.button("Markahan bilang Naibalik na ang Refund"):
                 try:
                     with tx() as cur:
@@ -857,10 +922,9 @@ with T[TAB_ORDERS]:
                     st.error(f"Error: {e}")
 
 
-# ================= INVENTORY MODULE (CATEGORIZED) =================
+# ================= INVENTORY MODULE =================
 with T[TAB_INV]:
-    st.subheader("Pamamahala ng Imbentaryo")
-    inv_sub = st.radio("Piliin ang Kategorya ng Imbentaryo:", [t("view_inventory"), t("add_product"), t("restock")], horizontal=True)
+    inv_sub = st.radio("Kategorya:", [t("view_inventory"), t("add_product"), t("restock")], horizontal=True)
     st.divider()
 
     if inv_sub == t("view_inventory"):
@@ -879,13 +943,13 @@ with T[TAB_INV]:
     elif inv_sub == t("add_product") and can("inventory"):
         with st.form("add_prod_form", clear_on_submit=True):
             p1, p2 = st.columns(2)
-            p_name = p1.text_input("Pangalan ng Produkto")
-            p_stock = p2.number_input("Kasalukuyang Stock", min_value=0, step=1)
+            p_name = p1.text_input(t("prod_name"))
+            p_stock = p2.number_input(t("current_stock"), min_value=0, step=1)
             p3, p4, p5 = st.columns(3)
-            p_price = p3.number_input("Presyo ng Pagbebenta (₱)", min_value=0.0, format="%.2f")
-            p_cost = p4.number_input("Puhunan bawat Yunit (₱)", min_value=0.0, format="%.2f")
-            p_reorder = p5.number_input("Reorder Level", min_value=0, value=5, step=1)
-            sub_prod = st.form_submit_button("I-save ang Produkto")
+            p_price = p3.number_input(t("selling_price"), min_value=0.0, format="%.2f")
+            p_cost = p4.number_input(t("cost_price"), min_value=0.0, format="%.2f")
+            p_reorder = p5.number_input(t("reorder_lvl"), min_value=0, value=5, step=1)
+            sub_prod = st.form_submit_button(t("save_prod_btn"))
         
         if sub_prod:
             if not p_name.strip():
@@ -911,9 +975,9 @@ with T[TAB_INV]:
             st.info("Walang produkto para lagyan ng stock.")
         else:
             with st.form("restock_form"):
-                r_name = st.selectbox("Pumili ng Produkto", df_products["name"].tolist())
-                r_qty = st.number_input("Dagdag na Dami", min_value=1, step=1)
-                sub_res = st.form_submit_button("Magdagdag sa Stock")
+                r_name = st.selectbox(t("prod_name"), df_products["name"].tolist())
+                r_qty = st.number_input(t("qty"), min_value=1, step=1)
+                sub_res = st.form_submit_button(t("add_stock_btn"))
             if sub_res:
                 try:
                     with tx() as cur:
@@ -926,7 +990,7 @@ with T[TAB_INV]:
 
 # ================= CANCELLATIONS MODULE =================
 with T[TAB_CANC]:
-    st.subheader("Talaan ng mga Kanselasyon at Pagbabalik")
+    st.subheader(t("cancellations"))
     df_c = query_df("SELECT * FROM cancellations WHERE business_id = %s ORDER BY id DESC", (bid(),))
     if df_c.empty:
         st.info("Walang nakatalang kanselasyon.")
@@ -935,23 +999,22 @@ with T[TAB_CANC]:
         df_c["amount"] = pd.to_numeric(df_c["amount"]).fillna(0.0)
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Kabuuang Bilang ng Kanselasyon", len(df_c))
+        m1.metric("Kabuuang Bilang", len(df_c))
         m2.metric("Na-cancel na Yunit", int(df_c["units"].sum()))
-        m3.metric("Kabuuang Halaga ng Na-cancel", f"₱{df_c['amount'].sum():,.2f}")
+        m3.metric("Kabuuang Halaga", f"₱{df_c['amount'].sum():,.2f}")
 
         st.divider()
-        st.subheader("Visualization ng mga Dahilan ng Pag-cancel")
+        st.subheader("Visualization ng mga Dahilan")
         reason_counts = df_c["reason"].replace("", "Walang Tukoy na Dahilan").value_counts()
         st.bar_chart(reason_counts)
 
-        st.subheader("Buong Listahan ng Kanselasyon")
         st.dataframe(df_c, use_container_width=True, hide_index=True)
 
 
 # ================= DASHBOARD MODULE =================
 if TAB_DASH in T:
     with T[TAB_DASH]:
-        st.subheader("Executive Dashboard ng Benta at Tubo")
+        st.subheader(t("dashboard"))
         valid_orders = df_orders[df_orders["active_qty"] > 0].copy()
         if valid_orders.empty:
             st.info("Walang sapat na datos para sa dashboard.")
@@ -964,27 +1027,21 @@ if TAB_DASH in T:
             est_profit = ((known_costs["price"] - known_costs["unit_cost"].astype(float)) * known_costs["active_qty"]).sum()
 
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Kabuuang Bilang ng Order", len(valid_orders))
-            col2.metric("Kabuuang Benta (Gross)", f"₱{valid_orders['total'].sum():,.2f}")
-            col3.metric("Tinatayang Tubo (Net Profit)", f"₱{est_profit:,.2f}")
-            col4.metric("Nakabinbing Refund", f"₱{df_orders['refund_pending'].sum():,.2f}")
+            col1.metric("Orders", len(valid_orders))
+            col2.metric("Benta (Gross)", f"₱{valid_orders['total'].sum():,.2f}")
+            col3.metric("Tubo (Net Profit)", f"₱{est_profit:,.2f}")
+            col4.metric("Refunds", f"₱{df_orders['refund_pending'].sum():,.2f}")
 
             st.divider()
-            st.subheader("Trend ng Benta ayon sa Araw")
+            st.subheader("Trend ng Benta")
             daily_sales = valid_orders.groupby("day")["total"].sum()
             st.line_chart(daily_sales)
-
-            st.subheader("Pag-uuri ng Benta bawat Produkto")
-            prod_sales = valid_orders.groupby(valid_orders["item"].str.lower())["total"].sum()
-            st.bar_chart(prod_sales)
 
 
 # ================= EXPORT MODULE =================
 if TAB_EXPORT in T:
     with T[TAB_EXPORT]:
-        st.subheader("Pag-download ng mga Datos (Export)")
-        st.write("I-download ang mga rekord sa format na CSV para sa external backup o pagsusuri.")
-        
+        st.subheader(t("export"))
         st.download_button("I-download ang mga Order (CSV)", data=df_orders.to_csv(index=False).encode("utf-8-sig"), file_name=f"orders_{now().date()}.csv", mime="text/csv")
         st.download_button("I-download ang Imbentaryo (CSV)", data=df_products.to_csv(index=False).encode("utf-8-sig"), file_name=f"inventory_{now().date()}.csv", mime="text/csv")
 
@@ -992,28 +1049,26 @@ if TAB_EXPORT in T:
 # ================= USERS MODULE =================
 if TAB_USERS in T:
     with T[TAB_USERS]:
-        st.subheader("Pamamahala ng mga Tauhan at Admin")
-        st.caption(f"Hanggang {MAX_ADMINS} Admin lamang ang pinapayagan bawat negosyo.")
-        
+        st.subheader(t("users"))
         users_df = query_df("SELECT id, username, full_name, role, active, created_at FROM users WHERE business_id = %s ORDER BY id", (bid(),))
-        st.dataframe(users_df.rename(columns={"username": "Username", "full_name": "Pangalan", "role": "Tungkulin (Role)", "active": "Aktibo?"}), use_container_width=True, hide_index=True)
+        st.dataframe(users_df, use_container_width=True, hide_index=True)
 
 
 # ================= ACCOUNT MODULE =================
 with T[TAB_ACC]:
-    st.subheader("Mga Setting ng Personal na Account")
+    st.subheader(t("account"))
     with st.form("change_acc_pw"):
-        c_pw = st.text_input("Kasalukuyang Password", type="password")
-        n_pw = st.text_input("Bagong Password", type="password")
-        n_pw2 = st.text_input("Kumpirmahin ang Bagong Password", type="password")
-        if st.form_submit_button("Palitan ang Password"):
+        c_pw = st.text_input(t("cur_pass"), type="password")
+        n_pw = st.text_input(t("new_pass"), type="password")
+        n_pw2 = st.text_input(t("confirm_pass"), type="password")
+        if st.form_submit_button(t("save_pass_btn")):
             r = query_df("SELECT password_hash FROM users WHERE id = %s", (st.session_state.user_id,))
             if r.empty or not check_password(c_pw, r.iloc[0]["password_hash"]):
-                st.error("Mali ang kasalukuyang password.")
+                st.warning("Mali ang kasalukuyang password.")
             else:
                 err_p = check_new_password(n_pw, n_pw2)
                 if err_p:
-                    st.error(err_p)
+                    st.warning(err_p)
                 else:
                     with tx() as cur:
                         cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (hash_password(n_pw), st.session_state.user_id))
