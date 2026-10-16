@@ -280,7 +280,7 @@ def users_exist():
 def insert_user(cur, username, password, role, business_id, full_name):
     cur.execute(
         """INSERT INTO users (username, password_hash, full_name, role, business_id, active, created_at)
-           VALUES (%s, %s, %s, %s, %s, TRUE, %s)""",
+            VALUES (%s, %s, %s, %s, %s, TRUE, %s)""",
         (username, hash_password(password), full_name.strip(), role, business_id, stamp()),
     )
 
@@ -371,7 +371,7 @@ if not users_exist():
     st.stop()
 
 
-# ---------- login ----------
+# ---------- login & self-registration ----------
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -395,32 +395,73 @@ def try_login(username, password):
 
 
 if not st.session_state.authenticated:
-    st.title("🔒 Mag-login sa Order Tracker")
+    st.title("🔒 Order Tracker - Portal")
     if st.session_state.get("lock_until", 0) > time.time():
         st.error("Masyadong maraming maling subok. Maghintay ng isang minuto bago ulit mag-login.")
         st.stop()
-    with st.form("login_form"):
-        u = st.text_input("Username")
-        p = st.text_input("Password", type="password")
-        ok = st.form_submit_button("Mag-login")
-    if ok:
-        rec, err = try_login(u.strip().lower(), p)
-        if err:
-            st.session_state["fails"] = st.session_state.get("fails", 0) + 1
-            if st.session_state["fails"] >= 5:
-                st.session_state["lock_until"] = time.time() + 60
+        
+    tab_login, tab_signup = st.tabs(["Mag-login", "Mag-register (Bagong Account)"])
+    
+    with tab_login:
+        with st.form("login_form"):
+            u = st.text_input("Username")
+            p = st.text_input("Password", type="password")
+            ok = st.form_submit_button("Mag-login")
+        if ok:
+            rec, err = try_login(u.strip().lower(), p)
+            if err:
+                st.session_state["fails"] = st.session_state.get("fails", 0) + 1
+                if st.session_state["fails"] >= 5:
+                    st.session_state["lock_until"] = time.time() + 60
+                    st.session_state["fails"] = 0
+                st.error(err)
+            else:
                 st.session_state["fails"] = 0
-            st.error(err)
-        else:
-            st.session_state["fails"] = 0
-            st.session_state.authenticated = True
-            st.session_state.user_id = int(rec["id"])
-            st.session_state.username = rec["username"]
-            st.session_state.full_name = rec["full_name"] or rec["username"]
-            st.session_state.role = rec["role"]
-            st.session_state.business_id = None if rec["role"] == "owner" else int(rec["business_id"])
-            st.session_state.business_name = rec["business_name"] if rec["role"] != "owner" else ""
-            st.rerun()
+                st.session_state.authenticated = True
+                st.session_state.user_id = int(rec["id"])
+                st.session_state.username = rec["username"]
+                st.session_state.full_name = rec["full_name"] or rec["username"]
+                st.session_state.role = rec["role"]
+                st.session_state.business_id = None if rec["role"] == "owner" else int(rec["business_id"])
+                st.session_state.business_name = rec["business_name"] if rec["role"] != "owner" else ""
+                st.rerun()
+
+    with tab_signup:
+        st.subheader("Gumawa ng sariling account")
+        active_biz = query_df("SELECT id, name FROM businesses WHERE active = TRUE ORDER BY name")
+        
+        with st.form("self_signup_form"):
+            new_u = st.text_input("Pumili ng Username (3-30 na letra/numero)")
+            new_fn = st.text_input("Buong Pangalan")
+            new_p1 = st.text_input("Password", type="password")
+            new_p2 = st.text_input("Ulitin ang Password", type="password")
+            
+            if active_biz.empty:
+                st.warning("Wala pang nakarehistrong negosyo.")
+                biz_choice = None
+            else:
+                biz_dict = {int(r.id): r.name for r in active_biz.itertuples()}
+                biz_choice = st.selectbox("Piliin ang Negosyo", list(biz_dict.keys()), format_func=lambda x: biz_dict[x])
+                
+            reg_ok = st.form_submit_button("Mag-register")
+            
+        if reg_ok:
+            new_u = new_u.strip().lower()
+            problem = check_username(new_u) or check_new_password(new_p1, new_p2)
+            if not biz_choice:
+                problem = "Pumili ng valid na negosyo."
+            
+            if problem:
+                st.error(problem)
+            else:
+                try:
+                    with tx() as cur:
+                        insert_user(cur, new_u, new_p1, "staff", int(biz_choice), new_fn)
+                    st.success("Tagumpay! Nagawa na ang iyong account. Pwede ka nang lumipat sa 'Mag-login' tab para pumasok.")
+                except psycopg2.IntegrityError:
+                    st.error("May gumagamit na ng username na iyan. Pumili ng iba.")
+                except Exception as e:
+                    st.error(f"May error: {e}")
     st.stop()
 
 # re-check on every run, so a disabled or changed account takes effect right away
@@ -486,8 +527,8 @@ def owner_panel():
         show_flash()
         biz = query_df(
             """SELECT b.id, b.name, b.active, b.created_at,
-                      (SELECT COUNT(*) FROM users u WHERE u.business_id = b.id AND u.active) AS active_users,
-                      (SELECT COUNT(*) FROM orders o WHERE o.business_id = b.id) AS orders
+                     (SELECT COUNT(*) FROM users u WHERE u.business_id = b.id AND u.active) AS active_users,
+                     (SELECT COUNT(*) FROM orders o WHERE o.business_id = b.id) AS orders
                FROM businesses b ORDER BY b.id"""
         )
         st.subheader("Mga Negosyo")
@@ -719,19 +760,19 @@ def cancel_units(order_id, units, restock, refunded_now, reason="", note=""):
 
             cur.execute(
                 """UPDATE orders SET
-                       cancelled_qty = %s,
-                       refund_due = COALESCE(refund_due, 0) + %s,
-                       refunded = COALESCE(refunded, 0) + %s,
-                       status = CASE WHEN %s THEN 'Cancelled' ELSE status END,
-                       updated_by = %s,
-                       updated_at = %s
+                        cancelled_qty = %s,
+                        refund_due = COALESCE(refund_due, 0) + %s,
+                        refunded = COALESCE(refunded, 0) + %s,
+                        status = CASE WHEN %s THEN 'Cancelled' ELSE status END,
+                        updated_by = %s,
+                        updated_at = %s
                    WHERE id = %s AND business_id = %s""",
                 (new_cancelled, refund_add, refunded_add, fully_cancelled, me(), stamp(), order_id, bid()),
             )
             cur.execute(
                 """INSERT INTO cancellations
-                       (cancelled_at, order_id, customer, item, units, unit_price, amount,
-                        was_paid, refunded_now, restocked, reason, note, cancelled_by, business_id)
+                        (cancelled_at, order_id, customer, item, units, unit_price, amount,
+                         was_paid, refunded_now, restocked, reason, note, cancelled_by, business_id)
                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (stamp(), order_id, customer, item, units, price, units * price, pay == "Paid",
                  bool(refunded_now), bool(restock), reason, note.strip(), me(), bid()),
@@ -1056,173 +1097,4 @@ with T[TAB_CANC]:
 
         st.subheader("Buong Listahan")
         prod_filter = st.selectbox("I-filter ayon sa Produkto", ["Lahat"] + sorted(by_item["Produkto"].tolist()))
-        log_view = df_c if prod_filter == "Lahat" else df_c[df_c["key"] == prod_filter.lower()]
-        log_view = log_view.rename(columns={
-            "cancelled_at": "Petsa", "order_id": "Order ID", "customer": "Customer", "item": "Produkto",
-            "units": "Piraso", "unit_price": "Presyo", "amount": "Halaga", "was_paid": "Bayad na?",
-            "refunded_now": "Refund agad?", "restocked": "Ibinalik sa stock?", "reason": "Dahilan",
-            "note": "Tala", "cancelled_by": "Ni-cancel ni",
-        })
-        cols = ["Petsa", "Order ID", "Customer", "Produkto", "Piraso", "Presyo", "Halaga", "Bayad na?",
-                "Refund agad?", "Ibinalik sa stock?", "Dahilan", "Tala", "Ni-cancel ni"]
-        st.dataframe(log_view[cols], use_container_width=True, hide_index=True)
-
-# ================= DASHBOARD (admin) =================
-if TAB_DASH in T:
-    with T[TAB_DASH]:
-        st.header("Sales Dashboard")
-        valid = df_orders[df_orders["active_qty"] > 0].copy()
-        if valid.empty:
-            st.info("Wala pang datos para sa dashboard.")
-        else:
-            valid["day"] = pd.to_datetime(valid["date"], errors="coerce").dt.date
-            period = st.selectbox("Panahon", ["Lahat", "Ngayon", "Huling 7 araw", "Huling 30 araw"])
-            today = now().date()
-            if period == "Ngayon":
-                valid = valid[valid["day"] == today]
-            elif period == "Huling 7 araw":
-                valid = valid[valid["day"] >= today - timedelta(days=6)]
-            elif period == "Huling 30 araw":
-                valid = valid[valid["day"] >= today - timedelta(days=29)]
-
-            costs = df_products.set_index(df_products["name"].str.lower())["cost"].to_dict()
-            valid["unit_cost"] = valid["item"].str.lower().map(costs)
-            known = valid.dropna(subset=["unit_cost"])
-            profit = ((known["price"] - known["unit_cost"].astype(float)) * known["active_qty"]).sum()
-
-            m1, m2, m3, m4, m5 = st.columns(5)
-            m1.metric("Bilang ng Orders", len(valid))
-            m2.metric("Kabuuang Benta", f"₱{valid['total'].sum():,.2f}")
-            m3.metric("Hindi pa bayad", f"₱{valid[valid['payment_status'] == 'Unpaid']['total'].sum():,.2f}")
-            m4.metric("Tinatayang Tubo", f"₱{profit:,.2f}")
-            m5.metric("Refund na dapat ibalik", f"₱{df_orders['refund_pending'].sum():,.2f}")
-            st.caption("Ang benta at tubo ay para lang sa mga piraso na hindi na-cancel. "
-                       "Ang tubo ay kinukuwenta lang para sa mga item na nasa Inventory na may puhunan.")
-
-            if valid.empty:
-                st.info("Walang orders sa piniling panahon.")
-            else:
-                st.subheader("Benta bawat Produkto")
-                st.bar_chart(valid.groupby(valid["item"].str.lower())["total"].sum())
-                st.subheader("Benta bawat Araw")
-                st.line_chart(valid.groupby("day")["total"].sum())
-
-        st.subheader("Bilang ng Orders ayon sa Status")
-        if not df_orders.empty:
-            st.bar_chart(df_orders["status"].value_counts())
-
-# ================= EXPORT (admin) =================
-if TAB_EXPORT in T:
-    with T[TAB_EXPORT]:
-        st.header("I-download ang mga Rekord")
-        st.download_button(
-            "📥 Orders (CSV, Excel compatible)",
-            data=df_orders.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"orders_{now().date()}.csv",
-            mime="text/csv",
-        )
-        st.download_button(
-            "📥 Inventory (CSV, Excel compatible)",
-            data=df_products.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"inventory_{now().date()}.csv",
-            mime="text/csv",
-        )
-        st.download_button(
-            "📥 Mga Na-cancel (CSV, Excel compatible)",
-            data=query_df("SELECT * FROM cancellations WHERE business_id = %s ORDER BY id DESC", (bid(),))
-            .to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"cancellations_{now().date()}.csv",
-            mime="text/csv",
-        )
-        st.info("Naka-save na ang data mo sa Supabase, kaya hindi na ito mawawala kapag nag-reboot ang app. "
-                "Ang CSV ay extra backup na lang.")
-
-# ================= USERS (admin) =================
-if TAB_USERS in T:
-    with T[TAB_USERS]:
-        show_flash()
-        st.header("Mga User ng Negosyo")
-        st.caption(f"Hanggang {MAX_ADMINS} Admin lang bawat negosyo. Ang Staff ay nag-i-input ng benta; "
-                   "ang Viewer ay tingin lang.")
-        df_u = query_df(
-            "SELECT id, username, full_name, role, active, created_at FROM users "
-            "WHERE business_id = %s ORDER BY id", (bid(),),
-        )
-        st.dataframe(
-            df_u.rename(columns={"id": "ID", "username": "Username", "full_name": "Pangalan", "role": "Role",
-                                 "active": "Aktibo?", "created_at": "Ginawa"}),
-            use_container_width=True, hide_index=True,
-        )
-
-        st.subheader("Magdagdag ng User")
-        with st.form("new_user", clear_on_submit=True):
-            nu1, nu2 = st.columns(2)
-            nu_user = nu1.text_input("Username (maliit na letra/numero, walang space)")
-            nu_full = nu2.text_input("Buong pangalan (optional)")
-            nu3, nu4 = st.columns(2)
-            nu_role = nu3.selectbox("Role", list(ROLE_LABELS.keys()), format_func=lambda x: ROLE_LABELS[x])
-            nu_pw = nu4.text_input(f"Password (hindi bababa sa {MIN_PASSWORD} karakter)", type="password")
-            go = st.form_submit_button("Idagdag ang User")
-        if go:
-            nu_user = nu_user.strip().lower()
-            problem = check_username(nu_user) or check_new_password(nu_pw)
-            if not problem and nu_role == "admin" and count_admins() >= MAX_ADMINS:
-                problem = f"Mayroon nang {MAX_ADMINS} admin ang negosyo."
-            if problem:
-                st.error(problem)
-            else:
-                try:
-                    with tx() as cur:
-                        insert_user(cur, nu_user, nu_pw, nu_role, bid(), nu_full)
-                    flash("success", f"Nadagdag na si {nu_user}.")
-                    st.rerun()
-                except psycopg2.IntegrityError:
-                    st.error("May gumagamit na ng username na iyan. Pumili ng iba.")
-                except Exception as e:
-                    st.error(f"May error: {e}")
-
-        others = df_u[df_u["id"] != st.session_state.user_id]
-        if not others.empty:
-            st.subheader("Baguhin ang User")
-            ulabels = {
-                int(r.id): f"{r.username} - {r.role} ({'aktibo' if r.active else 'naka-disable'})"
-                for r in others.itertuples()
-            }
-            uid = st.selectbox("Piliin ang user", list(ulabels.keys()),
-                               format_func=lambda x: ulabels[x], key="manage_user")
-            urow = others[others["id"] == uid].iloc[0]
-            roles = list(ROLE_LABELS.keys())
-            mu1, mu2 = st.columns(2)
-            m_role = mu1.selectbox(
-                "Role", roles, index=roles.index(urow["role"]) if urow["role"] in roles else 1,
-                format_func=lambda x: ROLE_LABELS[x], key=f"mrole_{uid}",
-            )
-            m_active = mu2.checkbox("Aktibo (pwedeng mag-login)", value=bool(urow["active"]), key=f"mact_{uid}")
-            m_pw = st.text_input("Bagong password (iwanang blangko kung hindi papalitan)",
-                                 type="password", key=f"mpw_{uid}")
-            if st.button("I-save ang pagbabago"):
-                problem = None
-                if m_pw:
-                    problem = check_new_password(m_pw)
-                if not problem and m_role == "admin" and m_active and count_admins(exclude_id=int(uid)) >= MAX_ADMINS:
-                    problem = f"Mayroon nang {MAX_ADMINS} admin ang negosyo."
-                if problem:
-                    st.error(problem)
-                else:
-                    with tx() as cur:
-                        cur.execute(
-                            "UPDATE users SET role = %s, active = %s WHERE id = %s AND business_id = %s",
-                            (m_role, m_active, int(uid), bid()),
-                        )
-                        if m_pw:
-                            cur.execute(
-                                "UPDATE users SET password_hash = %s WHERE id = %s AND business_id = %s",
-                                (hash_password(m_pw), int(uid), bid()),
-                            )
-                    flash("success", "Na-update na ang user.")
-                    st.rerun()
-        st.caption("Para sa sarili mong password, gamitin ang 🔑 Account tab.")
-
-# ================= ACCOUNT (lahat) =================
-with T[TAB_ACC]:
-    change_password_ui()
+        log_view
