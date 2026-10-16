@@ -475,7 +475,6 @@ def try_login(username, password):
 if not st.session_state.authenticated:
     st.title(f"🔐 {t('portal_title')}")
     
-    # Global Language Switcher sa Login Page nang walang kulay pula/highlights
     if "lang" not in st.session_state:
         st.session_state["lang"] = "Tagalog"
     
@@ -596,14 +595,6 @@ def find_product(name):
         return None
     r = df.iloc[0]
     return int(r["id"]), int(r["stock"]), float(r["price"])
-
-
-def sync_price():
-    choice = st.session_state.get("new_item", CUSTOM)
-    if choice != CUSTOM:
-        prod = find_product(choice)
-        if prod:
-            st.session_state["new_price"] = prod[2]
 
 
 # ---------------------------------------------------------------
@@ -743,19 +734,27 @@ with T[TAB_ORDERS]:
         st.subheader(t("add_order"))
         product_names = df_products["name"].tolist()
         
+        # Ligtas na pagkuha ng presyo nang walang callback error sa loob ng form
+        selected_item = st.selectbox(t("item_type"), [CUSTOM] + product_names, key="new_item")
+        default_price = 0.0
+        if selected_item != CUSTOM:
+            prod_info = find_product(selected_item)
+            if prod_info:
+                default_price = prod_info[2]
+
         with st.form("order_entry_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
             c1.text_input(t("customer_name"), key="new_customer")
             c2.text_input(t("contact_num"), key="new_contact")
 
             c3, c4 = st.columns(2)
-            c3.selectbox(t("item_type"), [CUSTOM] + product_names, key="new_item", on_change=sync_price)
-            if st.session_state.get("new_item", CUSTOM) == CUSTOM:
+            c3.write(f"Napiling Item: **{selected_item}**")
+            if selected_item == CUSTOM:
                 c4.text_input(t("custom_item"), key="new_item_custom")
 
             c5, c6, c7 = st.columns(3)
             c5.number_input(t("qty"), min_value=1, step=1, value=1, key="new_qty")
-            c6.number_input(t("unit_price"), min_value=0.0, format="%.2f", key="new_price")
+            c6.number_input(t("unit_price"), min_value=0.0, value=default_price, format="%.2f", key="new_price")
             c7.selectbox(t("pay_status"), PAYMENTS, key="new_payment")
 
             submitted_order = st.form_submit_button(t("save_order_btn"), type="primary")
@@ -763,8 +762,7 @@ with T[TAB_ORDERS]:
         if submitted_order:
             s = st.session_state
             cust = s.get("new_customer", "").strip()
-            item_choice = s.get("new_item", CUSTOM)
-            final_item = (s.get("new_item_custom", "") if item_choice == CUSTOM else item_choice).strip()
+            final_item = (s.get("new_item_custom", "") if selected_item == CUSTOM else selected_item).strip()
             qty = int(s.get("new_qty", 1))
             price = float(s.get("new_price", 0.0))
             payment = s.get("new_payment", "Unpaid")
